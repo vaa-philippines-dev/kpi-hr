@@ -1,0 +1,309 @@
+// KPI Management System — full data model (all phases scaffolded now;
+// see README.md and CLAUDE.md for which parts of the UI are wired up in Phase 1).
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Team {
+  HR
+  RECRUITMENT
+}
+
+enum Frequency {
+  WEEKLY
+  MONTHLY
+  COHORT
+}
+
+enum Direction {
+  HIGHER_IS_BETTER
+  LOWER_IS_BETTER
+}
+
+enum PeriodType {
+  WEEK
+  MONTH
+  ROLLING_90
+}
+
+enum PeriodStatus {
+  OPEN
+  CLOSED
+}
+
+enum SlaStatus {
+  ON_TIME
+  LATE
+  PENDING
+  NOT_APPLICABLE
+}
+
+enum CandidateStage {
+  SOURCED
+  SCREENED
+  INTERVIEWED
+  ENDORSED
+  OFFER
+  HIRED
+  REJECTED
+  WITHDRAWN
+}
+
+enum QualityMilestoneStatus {
+  NOT_DUE
+  DUE
+  COMPLETED
+  OVERDUE
+}
+
+enum AttributionStatus {
+  RECRUITER_ATTRIBUTABLE
+  NOT_ATTRIBUTABLE
+  PENDING_REVIEW
+}
+
+enum AppRole {
+  ADMIN
+  HR_MANAGER
+  RECRUITMENT_MANAGER
+  EMPLOYEE
+  VIEWER
+}
+
+/// Mirrors Supabase auth.users. Row is created lazily on first successful Google
+/// login (see app/auth/callback/route.ts): the callback looks up an Employee by
+/// email, and only creates a Profile — with id == auth.users.id — if a matching,
+/// active Employee already exists. There is no public sign-up path. New Profiles
+/// default to VIEWER; an ADMIN must promote them afterwards (see README bootstrap
+/// step for how the very first admin is promoted).
+model Profile {
+  id          String    @id @db.Uuid // == auth.users.id
+  email       String    @unique
+  fullName    String?
+  role        AppRole   @default(VIEWER)
+  employeeId  String?   @unique
+  employee    Employee? @relation(fields: [employeeId], references: [id])
+  createdAt   DateTime  @default(now())
+  lastLoginAt DateTime?
+  auditLogs   AuditLog[]
+}
+
+model Employee {
+  id                    String                 @id @default(uuid())
+  name                  String
+  team                  Team
+  role                  String // e.g. "Recruiter", "Recruitment Team Lead", "HR Staff"
+  email                 String                 @unique
+  active                Boolean                @default(true)
+  profile               Profile?
+  kpiConfigs            KPIConfig[]
+  activityLogs          HRActivityLog[]
+  candidatesAsRecruiter RecruitmentCandidate[] @relation("RecruiterCandidates")
+  hiresAsRecruiter      RecruitmentHire[]      @relation("RecruiterHires")
+  kpiResults            KPIResult[]
+  snapshots             KPISnapshot[]
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  @@index([team])
+  @@index([active])
+}
+
+/// Declares which operational data feeds a KPI and how the engine should window it
+/// (WEEKLY/MONTHLY/COHORT — see lib/scoring.ts and lib/kpi-engine.ts). This is the
+/// only place weights/targets/direction are edited — never in code.
+model KPIConfig {
+  id              String    @id @default(uuid())
+  employee        Employee  @relation(fields: [employeeId], references: [id])
+  employeeId      String
+  kpiName         String
+  weight          Decimal   @db.Decimal(5, 2) // e.g. 25.00 (%)
+  target          Decimal   @db.Decimal(10, 2)
+  unit            String // "%", "hires/week", "days", "count"
+  frequency       Frequency
+  direction       Direction
+  calculationType String // free-text description of numerator/denominator logic, referenced by the calc engine
+  dataSource      String // which table/field this KPI is computed from
+  slaTargetDays   Int?
+  active          Boolean   @default(true)
+  effectiveDate   DateTime
+  endDate         DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([employeeId, active])
+}
+
+model Period {
+  id         String       @id @default(uuid())
+  periodType PeriodType
+  label      String // e.g. "2026-W35", "2026-08"
+  startDate  DateTime
+  endDate    DateTime
+  status     PeriodStatus @default(OPEN)
+  results    KPIResult[]
+  snapshots  KPISnapshot[]
+
+  @@unique([periodType, label])
+}
+
+model HRActivityLog {
+  id            String    @id @default(uuid())
+  employee      Employee  @relation(fields: [employeeId], references: [id])
+  employeeId    String
+  activityType  String // ONBOARDING, OFFBOARDING, COE, PAYSTUB, EMPLOYEE_RELATIONS, PAYONEER, REFERRAL, FINANCIAL_ASSISTANCE, BENEFITS, LOAN, TIMEKEEPING, DOCUMENTATION, QA
+  referenceId   String? // links to the specific case/request/employee record
+  receivedDate  DateTime
+  dueDate       DateTime?
+  completedDate DateTime?
+  slaStatus     SlaStatus @default(PENDING)
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([employeeId, receivedDate])
+  @@index([activityType])
+}
+
+model RecruitmentCandidate {
+  id                String           @id @default(uuid())
+  applicationId     String           @unique
+  fullName          String
+  recruiter         Employee         @relation("RecruiterCandidates", fields: [recruiterId], references: [id])
+  recruiterId       String
+  role              String
+  source            String?
+  dateSourced       DateTime?
+  applicationDate   DateTime
+  screeningDate     DateTime?
+  interviewDate     DateTime?
+  endorsementDate   DateTime?
+  offerDate         DateTime?
+  hireDate          DateTime?
+  startDate         DateTime?
+  stage             CandidateStage   @default(SOURCED)
+  status            String?
+  rejectionReason   String?
+  trainingStatus    String?
+  clientReadyStatus String?
+  hire              RecruitmentHire?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([recruiterId, stage])
+}
+
+model RecruitmentHire {
+  id                 String                 @id @default(uuid())
+  candidate          RecruitmentCandidate   @relation(fields: [candidateId], references: [id])
+  candidateId        String                 @unique
+  recruiter          Employee               @relation("RecruiterHires", fields: [recruiterId], references: [id])
+  recruiterId        String
+  role               String
+  hireDate           DateTime
+  startDate          DateTime
+  hiringCohort       String // e.g. "2026-08"
+  day30DueDate       DateTime
+  day60DueDate       DateTime
+  day90DueDate       DateTime
+  day30Status        QualityMilestoneStatus @default(NOT_DUE)
+  day60Status        QualityMilestoneStatus @default(NOT_DUE)
+  day90Status        QualityMilestoneStatus @default(NOT_DUE)
+  performanceScore   Decimal?               @db.Decimal(5, 2)
+  clientSatisfaction Decimal?               @db.Decimal(5, 2)
+  attendanceScore    Decimal?               @db.Decimal(5, 2)
+  trainingQAScore    Decimal?               @db.Decimal(5, 2)
+  retentionStatus    String?
+  qualityScore       Decimal?               @db.Decimal(5, 2)
+  attributionStatus  AttributionStatus      @default(PENDING_REVIEW)
+  evaluationStatus   String?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  @@index([recruiterId, hiringCohort])
+  @@index([day30Status, day60Status, day90Status])
+}
+
+model DemandPlanning {
+  id             String   @id @default(uuid())
+  role           String
+  available      Int
+  clientReady    Int
+  incomingDemand Int
+  pocEmployeeId  String?
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+}
+
+/// Current calculated result per employee/period/KPI. Overwritten as a period
+/// recalculates while OPEN; once a period is CLOSED a KPISnapshot is written and
+/// this row should no longer change for that period.
+model KPIResult {
+  id            String   @id @default(uuid())
+  period        Period   @relation(fields: [periodId], references: [id])
+  periodId      String
+  employee      Employee @relation(fields: [employeeId], references: [id])
+  employeeId    String
+  kpiName       String
+  target        Decimal  @db.Decimal(10, 2)
+  actual        Decimal  @db.Decimal(10, 2)
+  achievement   Decimal  @db.Decimal(6, 4)
+  score         Decimal  @db.Decimal(4, 2)
+  rating        String
+  weight        Decimal  @db.Decimal(5, 2)
+  weightedScore Decimal  @db.Decimal(6, 4)
+  status        String?
+  /// For COHORT (quality-of-hire style) KPIs: how many hires were actually
+  /// evaluated to produce `actual`. Must be shown alongside the percentage —
+  /// null for non-cohort KPIs where a sample size isn't meaningful.
+  sampleSize    Int?
+  calculatedAt  DateTime @default(now())
+
+  @@unique([periodId, employeeId, kpiName])
+}
+
+/// Append-only historical record — never overwritten, never deleted. Written when
+/// a period closes (or on-demand) so trend charts and audits have a permanent copy
+/// of what was reported, independent of any later recalculation of KPIResult.
+model KPISnapshot {
+  id            String   @id @default(uuid())
+  snapshotDate  DateTime @default(now())
+  period        Period   @relation(fields: [periodId], references: [id])
+  periodId      String
+  employee      Employee @relation(fields: [employeeId], references: [id])
+  employeeId    String
+  kpiName       String
+  actual        Decimal  @db.Decimal(10, 2)
+  target        Decimal  @db.Decimal(10, 2)
+  achievement   Decimal  @db.Decimal(6, 4)
+  score         Decimal  @db.Decimal(4, 2)
+  rating        String
+  weightedScore Decimal  @db.Decimal(6, 4)
+  sampleSize    Int?
+  calculatedAt  DateTime @default(now())
+
+  @@index([employeeId, periodId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  timestamp  DateTime @default(now())
+  userId     String?  @db.Uuid // Profile.id
+  user       Profile? @relation(fields: [userId], references: [id])
+  action     String // CREATE, UPDATE, DELETE, RECLASSIFY, etc.
+  recordType String
+  recordId   String
+  oldValue   Json?
+  newValue   Json?
+  source     String?
+  notes      String?
+
+  @@index([recordType, recordId])
+  @@index([timestamp])
+}
