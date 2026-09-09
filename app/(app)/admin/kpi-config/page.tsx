@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 export default async function KpiConfigPage() {
   const user = await requireRole("ADMIN", "HR_MANAGER", "RECRUITMENT_MANAGER");
 
-  const teamFilter =
+  const teamFilter: "HR" | "RECRUITMENT" | null =
     user.role === "HR_MANAGER" ? "HR" : user.role === "RECRUITMENT_MANAGER" ? "RECRUITMENT" : null;
 
   const employees = await prisma.employee.findMany({
