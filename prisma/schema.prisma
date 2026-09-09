@@ -257,7 +257,7 @@ model KPIResult {
   score         Decimal  @db.Decimal(4, 2)
   rating        String
   weight        Decimal  @db.Decimal(5, 2)
-  weightedScore Decimal  @db.Decimal(6, 4)
+  weightedScore Decimal  @db.Decimal(8, 4)
   status        String?
   /// For COHORT (quality-of-hire style) KPIs: how many hires were actually
   /// evaluated to produce `actual`. Must be shown alongside the percentage —
@@ -284,7 +284,7 @@ model KPISnapshot {
   achievement   Decimal  @db.Decimal(6, 4)
   score         Decimal  @db.Decimal(4, 2)
   rating        String
-  weightedScore Decimal  @db.Decimal(6, 4)
+  weightedScore Decimal  @db.Decimal(8, 4)
   sampleSize    Int?
   calculatedAt  DateTime @default(now())
 
