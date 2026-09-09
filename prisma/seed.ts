@@ -313,7 +313,9 @@ async function main() {
           offerDate: willHire ? addDays(applicationDate, 12) : null,
           hireDate: willHire ? addDays(applicationDate, randInt(14, 40)) : null,
           startDate: willHire ? addDays(applicationDate, randInt(21, 47)) : null,
-          stage: willHire ? "HIRED" : pick(["SCREENED", "INTERVIEWED", "REJECTED", "WITHDRAWN"]),
+          stage: willHire
+            ? "HIRED"
+            : pick(["SCREENED", "INTERVIEWED", "REJECTED", "WITHDRAWN"] as const),
           status: willHire ? "Active" : "Closed",
         },
       });
@@ -344,11 +346,12 @@ async function main() {
           ? (performanceScore! + clientSatisfaction! + attendanceScore! + trainingQAScore!) / 4
           : null;
 
-        const attributionStatus = !anyEvaluated
-          ? "PENDING_REVIEW"
-          : qualityScore! < 75
-            ? pick(["RECRUITER_ATTRIBUTABLE", "NOT_ATTRIBUTABLE"] as const)
-            : "PENDING_REVIEW";
+        const attributionStatus: "PENDING_REVIEW" | "RECRUITER_ATTRIBUTABLE" | "NOT_ATTRIBUTABLE" =
+          !anyEvaluated
+            ? "PENDING_REVIEW"
+            : qualityScore! < 75
+              ? pick(["RECRUITER_ATTRIBUTABLE", "NOT_ATTRIBUTABLE"] as const)
+              : "PENDING_REVIEW";
 
         await prisma.recruitmentHire.create({
           data: {
