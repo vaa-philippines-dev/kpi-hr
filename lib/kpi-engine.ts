@@ -13,7 +13,11 @@ import type { KPIConfig, Period } from "@prisma/client";
  * executable counterpart. Add a new KPI by adding a config row *and* a matching
  * entry here.
  */
-type MetricResult = { actual: number; sampleSize?: number };
+// null means "nothing to measure this period" (e.g. an average over zero
+// events) — distinct from a real actual of 0, which is scored normally. The
+// engine skips writing a KPIResult for that employee/period/KPI rather than
+// inventing a perfect or zero score for data that doesn't exist.
+type MetricResult = { actual: number; sampleSize?: number } | null;
 type MetricFn = (employeeId: string, period: Period) => Promise<MetricResult>;
 
 export const KPI_METRICS: Record<string, MetricFn> = {
@@ -47,7 +51,7 @@ export const KPI_METRICS: Record<string, MetricFn> = {
       },
       select: { receivedDate: true, completedDate: true },
     });
-    if (rows.length === 0) return { actual: 0 };
+    if (rows.length === 0) return null; // nothing completed this period — not "0-day turnaround"
     const totalDays = rows.reduce((sum, r) => {
       const days = (r.completedDate!.getTime() - r.receivedDate.getTime()) / 86_400_000;
       return sum + days;
@@ -74,7 +78,7 @@ export const KPI_METRICS: Record<string, MetricFn> = {
       where: { recruiterId: employeeId, hireDate: { gte: period.startDate, lte: period.endDate } },
       include: { candidate: { select: { applicationDate: true } } },
     });
-    if (hires.length === 0) return { actual: 0 };
+    if (hires.length === 0) return null; // no hires this period — not "0-day time-to-fill"
     const totalDays = hires.reduce((sum, h) => {
       const days = (h.hireDate.getTime() - h.candidate.applicationDate.getTime()) / 86_400_000;
       return sum + days;
@@ -138,7 +142,13 @@ export async function recomputeKpiResultsForEmployee(
       continue;
     }
 
-    const { actual, sampleSize } = await metric(employeeId, period);
+    const metricResult = await metric(employeeId, period);
+    if (metricResult === null) {
+      results.push({ employeeId, kpiName: config.kpiName, skipped: "no underlying data this period" });
+      continue;
+    }
+    const { actual, sampleSize } = metricResult;
+
     const scored = calculateKpiResult({
       actual,
       target: Number(config.target),
@@ -149,8 +159,8 @@ export async function recomputeKpiResultsForEmployee(
     await prisma.kPIResult.upsert({
       where: { periodId_employeeId_kpiName: { periodId: period.id, employeeId, kpiName: config.kpiName } },
       create: {
-        periodId: period.id,
-        employeeId,
+        period: { connect: { id: period.id } },
+        employee: { connect: { id: employeeId } },
         kpiName: config.kpiName,
         target: scored.target,
         actual: scored.actual,

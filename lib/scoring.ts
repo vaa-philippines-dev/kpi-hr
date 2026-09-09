@@ -28,6 +28,14 @@ export const RATING_BANDS: { min: number; max: number; rating: Rating }[] = [
 ];
 
 /**
+ * Upper bound on a returned achievement value. Score/rating already saturate
+ * (see calculateScore) long before achievement reaches this — it exists purely
+ * so an extreme ratio (e.g. a LOWER_IS_BETTER KPI with actual = 0) never comes
+ * out as Infinity/NaN, which KPIResult.achievement (Decimal(6,4)) can't store.
+ */
+export const MAX_ACHIEVEMENT = 99;
+
+/**
  * Achievement = Actual / Target, inverted for LOWER_IS_BETTER KPIs
  * (Achievement = Target / Actual) so a smaller actual still yields >1.
  */
@@ -41,11 +49,14 @@ export function calculateAchievement(
     // divide-by-zero blowing up the dashboard for a not-yet-configured KPI.
     return actual === 0 ? 1 : direction === "LOWER_IS_BETTER" ? 1 : 0;
   }
-  if (direction === "LOWER_IS_BETTER") {
-    if (actual === 0) return target === 0 ? 1 : Number.POSITIVE_INFINITY;
-    return target / actual;
-  }
-  return actual / target;
+  const raw =
+    direction === "LOWER_IS_BETTER"
+      ? actual === 0
+        ? MAX_ACHIEVEMENT
+        : target / actual
+      : actual / target;
+  if (!Number.isFinite(raw)) return MAX_ACHIEVEMENT;
+  return Math.max(0, Math.min(raw, MAX_ACHIEVEMENT));
 }
 
 /** Score = 3 + ((Achievement - 1) x 3), capped to [1.00, 5.00]. */
